@@ -29,7 +29,7 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
     cors: {
-        origin: process.env.FRONTEND_URL || "*", // Restrict CORS in production
+        origin: process.env.FRONTEND_URL || "*"||"https://present-karena-cpprestomania-99c22f9c.koyeb.app" // Restrict CORS in production
         methods: ["GET", "POST", "PUT", "DELETE"],
         credentials: true,
     },
