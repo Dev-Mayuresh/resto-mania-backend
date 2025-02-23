@@ -1,46 +1,63 @@
 const db = require('../config/db');
-
 exports.createOrder = async (req, res) => {
     try {
-        const { client_id, items, session_id, order_id } = req.body; // ✅ API must send `order_id`
+        const { client_id, items, session_id, order_id, table_id } = req.body; // ✅ API must send `order_id`
 
         if (!items || items.length === 0) {
             return res.status(400).json({ error: "Order must contain at least one item." });
         }
 
-        // ✅ Step 1: Insert the API-generated order_id into Customer_Orders
-        await db.query(
-            `INSERT INTO Customer_Orders (Order_ID, Client_ID, Order_Status) 
-             VALUES ($1, $2, 'Processing') 
-             ON CONFLICT (Order_ID) DO NOTHING;`, 
-            [order_id, client_id]
-        );
+        // ✅ Step 1: Check if the table exists and fetch its status
+        const tableQuery = `SELECT table_status, customer_count FROM Tables WHERE table_id = $1`;
+        const tableResult = await db.query(tableQuery, [table_id]);
 
-        // ✅ Step 2: Insert session into Order_Sessions (if not exists)
-        await db.query(
-            `INSERT INTO Order_Sessions (Session_ID, Order_ID, Session_Status) 
-             VALUES ($1, $2, 'Pending')
-             ON CONFLICT (Session_ID) DO NOTHING;`,
-            [session_id, order_id]
-        );
+        if (tableResult.rows.length === 0) {
+            return res.status(400).json({ error: "Invalid table ID" });
+        }
 
-        // ✅ Step 3: Fetch menu_item_ids from Menu_Items based on item names
-        const menuItemMap = await getMenuItemIds(items);
+        const { table_status, customer_count } = tableResult.rows[0];
 
-        // ✅ Step 4: Insert items into Order_Items
-        const orderItemsQuery = `
-            INSERT INTO Order_Items (Order_ID, Menu_Item_ID, Quantity, Session_ID)
-            VALUES ${items.map(item => `(${order_id}, ${menuItemMap[item.item_name]}, ${item.quantity}, '${session_id}')`).join(',')}
-            RETURNING *;
-        `;    
-        const orderItemsResult = await db.query(orderItemsQuery);
+        // ✅ Step 2: Ensure table is available or not full (max 2 customers)
+        if (table_status === 'Available' || customer_count <= 2) {
+            // ✅ Step 3: Insert the API-generated order_id into Customer_Orders
+            await db.query(
+                `INSERT INTO Customer_Orders (Order_ID, Client_ID, Table_ID, Order_Status) 
+                 VALUES ($1, $2, $3, 'Processing') 
+                 ON CONFLICT (Order_ID) DO NOTHING;`, 
+                [order_id, client_id, table_id]
+            );
 
-        // ✅ Return success message without exposing `order_id`
-        res.status(201).json({
-            message: "Order placed successfully!",
-            session_id, // ✅ Only returning session_id
-            items: orderItemsResult.rows
-        });
+            // ✅ Step 4: Insert session into Order_Sessions (if not exists)
+            await db.query(
+                `INSERT INTO Order_Sessions (Session_ID, Order_ID, Session_Status) 
+                 VALUES ($1, $2, 'Pending')
+                 ON CONFLICT (Session_ID) DO NOTHING;`,
+                [session_id, order_id]
+            );
+
+            // ✅ Step 5: Fetch menu_item_ids from Menu_Items based on item names
+            const menuItemMap = await getMenuItemIds(items);
+
+            // ✅ Step 6: Insert items into Order_Items
+            const orderItemsQuery = `
+                INSERT INTO Order_Items (Order_ID, Menu_Item_ID, Quantity, Session_ID)
+                VALUES ${items.map(item => `(${order_id}, ${menuItemMap[item.item_name]}, ${item.quantity}, '${session_id}')`).join(',')}
+                RETURNING *;
+            `;    
+            const orderItemsResult = await db.query(orderItemsQuery);
+
+            // ❌ Removed manual customer_count update (handled by the trigger)
+
+            // ✅ Step 7: Return success message
+            res.status(201).json({
+                message: "Order placed successfully!",
+                session_id, // ✅ Only returning session_id
+                items: orderItemsResult.rows
+            });
+
+        } else {
+            return res.status(400).json({ error: "Table is full (maximum 4 customers allowed)." });
+        }
 
     } catch (err) {
         console.error("🚨 Error in createOrder:", err);
@@ -48,8 +65,7 @@ exports.createOrder = async (req, res) => {
     }
 };
 
-
-// Helper function to fetch menu_item_ids
+// ✅ Helper function to fetch menu_item_ids
 const getMenuItemIds = async (items) => {
     const itemNames = items.map(item => item.item_name);
     const menuItemQuery = `
