@@ -47,7 +47,7 @@ module.exports = (io, db) => {
             for (const bill of statusResult.rows) {
                 const webhookData = { orderId: bill.order_id, billRequestId: bill.bill_request_id, newStatus: bill.bill_status };
                 try {
-                    await axios.post("http://localhost:5000/webhook/bill-update", webhookData);
+                    await axios.post("https://present-karena-cpprestomania-99c22f9c.koyeb.app/webhook/bill-update", webhookData);
                     console.log(`✅ Webhook sent for bill ${bill.bill_request_id}: ${bill.bill_status}`);
                 } catch (error) {
                     console.error("❌ Webhook failed:", error.response?.data || error.message);
