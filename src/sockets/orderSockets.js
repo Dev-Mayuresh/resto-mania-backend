@@ -83,7 +83,7 @@ module.exports = (io, db) => {
                     };
 
                     try {
-                        await axios.post("http://localhost:5000/webhook/order-update", webhookData);
+                        await axios.post("https://present-karena-cpprestomania-99c22f9c.koyeb.app/webhook/order-update", webhookData);
                         console.log(`✅ Webhook sent for session ${session.session_id}: ${session.session_status}`);
                         notifiedSessions.add(session.session_id); // Prevent duplicate notifications
                     } catch (error) {
