@@ -10,37 +10,134 @@ module.exports = (io, db) => {
         console.log(`🟢 User connected: ${socket.id}`);
         activeSockets.add(socket.id);
 
-        // ✅ Fetch active orders including table details
+        // ✅ Fetch active orders including related sessions, dish names, and quantities
         const fetchActiveOrders = async () => {
             if (activeSockets.size === 0) return;
             try {
                 console.log("🔍 Fetching active kitchen orders...");
+
                 const orderQuery = `
-                    SELECT o.*, t.table_number, t.table_status 
-                    FROM Customer_Orders o
-                    JOIN Tables t ON o.table_id = t.table_id
-                    WHERE o.Order_Status IN ('Processing', 'Active') 
-                    ORDER BY o.Order_Date DESC
+                    SELECT * FROM Customer_Orders 
+                    WHERE Order_Status IN ('Processing', 'Active') 
+                    ORDER BY Order_Date DESC
                 `;
                 const orderResult = await db.query(orderQuery);
-                io.emit("loadKitchenOrders", orderResult.rows);
+                let orders = orderResult.rows;
+
+                if (orders.length === 0) {
+                    console.log("ℹ No active kitchen orders found.");
+                    io.emit("loadKitchenOrders", []);
+                    return;
+                }
+
+                // Fetch sessions and items for each order
+                for (let order of orders) {
+                    const sessionQuery = `
+                        SELECT session_id, order_id, session_start, session_status, updated_at
+                        FROM Order_Sessions 
+                        WHERE order_id = $1
+                    `;
+                    const sessionResult = await db.query(sessionQuery, [order.order_id]);
+                    let sessions = sessionResult.rows;
+
+                    if (sessions.length === 0) {
+                        order.sessions = [];
+                        continue;
+                    }
+
+                    // Fetch items for each session
+                    for (let session of sessions) {
+                        const itemQuery = `
+                            SELECT oi.session_id, mi.item_name, oi.quantity
+                            FROM Order_Items oi
+                            JOIN Menu_Items mi ON oi.menu_item_id = mi.menu_item_id
+                            WHERE oi.session_id = $1
+                        `;
+                        const itemResult = await db.query(itemQuery, [session.session_id]);
+                        session.items = itemResult.rows;
+                    }
+
+                    order.sessions = sessions;
+                }
+
+                console.log(`📤 Sending ${orders.length} active kitchen orders.`);
+                io.emit("loadKitchenOrders", orders);
             } catch (err) {
                 console.error("❌ Error fetching active orders:", err);
             }
         };
 
-        // ✅ Fetch previous orders
         const fetchPreviousOrders = async () => {
             if (activeSockets.size === 0) return;
             console.log("📥 Requesting previous orders...");
+        
             try {
-                const sessionQuery = `SELECT * FROM Order_Sessions WHERE Session_Status IN ('Completed', 'Cancelled')`;
+                console.log("🔍 Fetching sessions with 'Completed' or 'Cancelled' status...");
+        
+                // ✅ Fetch sessions that are either 'Completed' or 'Cancelled'
+                const sessionQuery = `
+                    SELECT * FROM Order_Sessions 
+                    WHERE Session_Status IN ('Completed', 'Cancelled')
+                `;
                 const sessionResult = await db.query(sessionQuery);
-                io.emit("loadPreviousOrders", sessionResult.rows);
+                console.log(`🔹 Found ${sessionResult.rows.length} matching sessions.`);
+        
+                const sessions = sessionResult.rows;
+                if (sessions.length === 0) {
+                    console.log("ℹ No previous sessions found.");
+                    io.emit("loadPreviousOrders", []);
+                    return;
+                }
+        
+                // ✅ Extract Order IDs linked to these sessions
+                const orderIds = [...new Set(sessions.map(session => session.order_id))];
+                console.log(`🔹 Fetching orders linked to sessions: ${orderIds}`);
+        
+                // ✅ Fetch orders for these sessions (ignoring status)
+                const orderQuery = `
+                    SELECT * FROM Customer_Orders 
+                    WHERE Order_ID = ANY($1)
+                    ORDER BY Order_Date DESC
+                `;
+                const orderResult = await db.query(orderQuery, [orderIds]);
+                console.log(`🔹 Found ${orderResult.rows.length} orders.`);
+        
+                const orders = orderResult.rows;
+        
+                // ✅ Extract Session IDs for fetching ordered items
+                const sessionIds = sessions.map(session => session.session_id);
+                console.log(`🔹 Fetching order items for sessions: ${sessionIds}`);
+        
+                const orderItemsQuery = `
+                    SELECT oi.Session_ID, mi.Item_Name, oi.Quantity
+                    FROM Order_Items oi
+                    JOIN Menu_Items mi ON oi.Menu_Item_ID = mi.Menu_Item_ID
+                    WHERE oi.Session_ID = ANY($1)
+                `;
+                const orderItemsResult = await db.query(orderItemsQuery, [sessionIds]);
+                console.log(`🔹 Found ${orderItemsResult.rows.length} ordered items.`);
+        
+                const orderItems = orderItemsResult.rows;
+        
+                // ✅ Attach items to sessions
+                const sessionsWithItems = sessions.map(session => ({
+                    ...session,
+                    items: orderItems.filter(item => item.session_id === session.session_id)
+                }));
+        
+                // ✅ Attach sessions to orders
+                const response = orders.map(order => ({
+                    ...order,
+                    sessions: sessionsWithItems.filter(session => session.order_id === order.order_id)
+                }));
+        
+                console.log(`📤 Sending ${response.length} previous orders to client.`);
+                io.emit("loadPreviousOrders", response);
             } catch (err) {
                 console.error("❌ Error fetching previous orders:", err);
             }
         };
+        
 
         // ✅ Start polling only when the first user connects
         if (!activeOrdersInterval) activeOrdersInterval = setInterval(fetchActiveOrders, 5000);
