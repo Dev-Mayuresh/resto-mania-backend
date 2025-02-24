@@ -60,7 +60,8 @@ module.exports = (io, db) => {
                         clientId: bill.client_id,
                         orderId: bill.order_id,
                         billRequestId: bill.bill_request_id,
-                        newStatus: bill.bill_status
+                        newStatus: bill.bill_status, 
+                        type: "bill_update" 
                     };
 
                     try {
