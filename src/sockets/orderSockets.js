@@ -4,13 +4,12 @@ module.exports = (io, db) => {
     let activeSockets = new Set();
     let activeOrdersInterval = null;
     let previousOrdersInterval = null;
-    let notifiedSessions = new Set(); // Track notified sessions
+    let notifiedSessions = new Map(); // Track session_id -> last notified status
 
     io.on("connection", (socket) => {
         console.log(`🟢 User connected: ${socket.id}`);
         activeSockets.add(socket.id);
 
-        // ✅ Fetch active orders including related sessions, dish names, and quantities
         const fetchActiveOrders = async () => {
             if (activeSockets.size === 0) return;
             try {
@@ -30,7 +29,6 @@ module.exports = (io, db) => {
                     return;
                 }
 
-                // Fetch sessions and items for each order
                 for (let order of orders) {
                     const sessionQuery = `
                         SELECT session_id, order_id, session_start, session_status, updated_at
@@ -45,7 +43,6 @@ module.exports = (io, db) => {
                         continue;
                     }
 
-                    // Fetch items for each session
                     for (let session of sessions) {
                         const itemQuery = `
                             SELECT oi.session_id, mi.item_name, oi.quantity
@@ -74,10 +71,9 @@ module.exports = (io, db) => {
             try {
                 console.log("🔍 Fetching sessions with 'Completed' or 'Cancelled' status...");
         
-                // ✅ Fetch sessions that are either 'Completed' or 'Cancelled'
                 const sessionQuery = `
                     SELECT * FROM Order_Sessions 
-                    WHERE Session_Status IN ('Completed', 'Cancelled')
+                    WHERE Session_Status IN ('Completed', 'Cancelled','Declined')
                 `;
                 const sessionResult = await db.query(sessionQuery);
                 console.log(`🔹 Found ${sessionResult.rows.length} matching sessions.`);
@@ -89,11 +85,13 @@ module.exports = (io, db) => {
                     return;
                 }
         
-                // ✅ Extract Order IDs linked to these sessions
                 const orderIds = [...new Set(sessions.map(session => session.order_id))];
-                console.log(`🔹 Fetching orders linked to sessions: ${orderIds}`);
-        
-                // ✅ Fetch orders for these sessions (ignoring status)
+                if (orderIds.length === 0) {
+                    console.log("ℹ No previous orders found.");
+                    io.emit("loadPreviousOrders", []);
+                    return;
+                }
+
                 const orderQuery = `
                     SELECT * FROM Customer_Orders 
                     WHERE Order_ID = ANY($1)
@@ -104,7 +102,6 @@ module.exports = (io, db) => {
         
                 const orders = orderResult.rows;
         
-                // ✅ Extract Session IDs for fetching ordered items
                 const sessionIds = sessions.map(session => session.session_id);
                 console.log(`🔹 Fetching order items for sessions: ${sessionIds}`);
         
@@ -119,13 +116,11 @@ module.exports = (io, db) => {
         
                 const orderItems = orderItemsResult.rows;
         
-                // ✅ Attach items to sessions
                 const sessionsWithItems = sessions.map(session => ({
                     ...session,
                     items: orderItems.filter(item => item.session_id === session.session_id)
                 }));
         
-                // ✅ Attach sessions to orders
                 const response = orders.map(order => ({
                     ...order,
                     sessions: sessionsWithItems.filter(session => session.order_id === order.order_id)
@@ -137,9 +132,7 @@ module.exports = (io, db) => {
                 console.error("❌ Error fetching previous orders:", err);
             }
         };
-        
 
-        // ✅ Start polling only when the first user connects
         if (!activeOrdersInterval) activeOrdersInterval = setInterval(fetchActiveOrders, 5000);
         if (!previousOrdersInterval) previousOrdersInterval = setInterval(fetchPreviousOrders, 15000);
 
@@ -157,32 +150,37 @@ module.exports = (io, db) => {
         });
     });
 
-    // ✅ Webhook for status updates (Only notify on specific status changes)
+    // ✅ Webhook for status updates (Only notify on actual changes)
     setInterval(async () => {
         if (activeSockets.size === 0) return;
         try {
             console.log("🔍 Checking for order status updates...");
 
-            // Fetch sessions with status: Accepted, Declined, Completed, Cancelled
             const statusQuery = `
-                SELECT session_id, order_id, session_status 
-                FROM Order_Sessions 
-                WHERE session_status IN ('Accepted', 'Declined', 'Completed', 'Cancelled')
+                SELECT os.session_id, os.order_id, os.session_status, co.client_id 
+                FROM Order_Sessions os
+                JOIN Customer_Orders co ON os.order_id = co.order_id  
+                WHERE os.session_status IN ('Accepted', 'Declined', 'Completed', 'Cancelled')
             `;
             const sessionResult = await db.query(statusQuery);
 
             for (const session of sessionResult.rows) {
-                if (!notifiedSessions.has(session.session_id)) {
+                const lastStatus = notifiedSessions.get(session.session_id);
+
+                if (lastStatus !== session.session_status) {
                     const webhookData = {
+                        clientId: session.client_id,
                         orderId: session.order_id,
                         sessionId: session.session_id,
                         newStatus: session.session_status
                     };
 
                     try {
-                        await axios.post("https://present-karena-cpprestomania-99c22f9c.koyeb.app/webhook/order-update", webhookData);
-                        console.log(`✅ Webhook sent for session ${session.session_id}: ${session.session_status}`);
-                        notifiedSessions.add(session.session_id); // Prevent duplicate notifications
+                        await axios.post("https://webhook.botpress.cloud/6df86dac-9e27-4939-b82d-1b930b382ee6", webhookData);
+                        console.log(`✅ Webhook sent for session ${session.client_id}:${session.order_id}:${session.session_id}: ${session.session_status}`);
+                        
+                        // Store the last notified status
+                        notifiedSessions.set(session.session_id, session.session_status);
                     } catch (error) {
                         console.error("❌ Webhook failed:", error.response?.data || error.message);
                     }
