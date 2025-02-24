@@ -172,7 +172,8 @@ module.exports = (io, db) => {
                         clientId: session.client_id,
                         orderId: session.order_id,
                         sessionId: session.session_id,
-                        newStatus: session.session_status
+                        newStatus: session.session_status, 
+                        type: "order_update" 
                     };
 
                     try {
