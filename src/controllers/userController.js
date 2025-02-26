@@ -55,3 +55,33 @@ exports.updateUser = async (req, res) => {
         res.status(500).json({ error: err.message });
     }
 };
+
+exports.updateConversationId = async (req, res) => { 
+    const { clientId, convoId } = req.body;
+
+    if (!clientId || !convoId) {
+        return res.status(400).json({ error: "Missing clientId or convoId" });
+    }
+
+    try {
+   
+        const checkQuery = `SELECT convo_id FROM user_details WHERE client_id = $1`;
+        const result = await db.query(checkQuery, [clientId]);
+
+        if (result.rows.length > 0) {
+            const existingConvoId = result.rows[0].convo_id;
+            if (existingConvoId !== convoId) {
+                const updateQuery = `UPDATE user_details SET convo_id = $1 WHERE client_id = $2`;
+                await db.query(updateQuery, [convoId, clientId]);
+                console.log(`🔄 Updated convo_id for client ${clientId}`);
+            }
+        } else {
+            return res.status(404).json({ error: "Client not found" });
+        }
+
+        return res.status(200).json({ message: "Conversation ID updated", convoId });
+    } catch (err) {
+        console.error("❌ Error updating convo_id:", err);
+        return res.status(500).json({ error: "Internal server error" });
+    }
+};
