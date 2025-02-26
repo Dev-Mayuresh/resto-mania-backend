@@ -156,11 +156,16 @@ module.exports = (io, db) => {
         try {
             console.log("🔍 Checking for order status updates...");
 
-            const statusQuery = `
-                SELECT os.session_id, os.order_id, os.session_status, co.client_id 
-                FROM Order_Sessions os
-                JOIN Customer_Orders co ON os.order_id = co.order_id  
-                WHERE os.session_status IN ('Accepted', 'Declined', 'Completed', 'Cancelled')
+            const statusQuery = `SELECT 
+                os.session_id, 
+                os.order_id, 
+                os.session_status, 
+                co.client_id, 
+                ud.convo_id
+            FROM Order_Sessions os
+            JOIN Customer_Orders co ON os.order_id = co.order_id  
+            JOIN user_details ud ON co.client_id = ud.client_id
+            WHERE os.session_status IN ('Accepted', 'Declined', 'Completed', 'Cancelled');
             `;
             const sessionResult = await db.query(statusQuery);
 
@@ -173,12 +178,13 @@ module.exports = (io, db) => {
                         orderId: session.order_id,
                         sessionId: session.session_id,
                         newStatus: session.session_status, 
-                        type: "order_update" 
+                        type: "order_update",
+                        convoId: session.convo_id
                     };
 
                     try {
                         await axios.post("https://webhook.botpress.cloud/6df86dac-9e27-4939-b82d-1b930b382ee6", webhookData);
-                        console.log(`✅ Webhook sent for session ${session.client_id}:${session.order_id}:${session.session_id}: ${session.session_status}`);
+                        console.log(`✅ Webhook sent for session ${session.convo_id}:${session.client_id}:${session.order_id}:${session.session_id}: ${session.session_status}`);
                         
                         // Store the last notified status
                         notifiedSessions.set(session.session_id, session.session_status);
