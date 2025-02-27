@@ -183,7 +183,7 @@ module.exports = (io, db) => {
                     };
 
                     try {
-                        await axios.post("https://webhook.botpress.cloud/b967de81-4aea-49da-a92e-ed73769b636e", webhookData);
+                        await axios.post("https://webhook.botpress.cloud/6c6aa75d-ce99-42a3-b6aa-d499c957ed2a", webhookData);
                         console.log(`✅ Webhook sent for session ${session.convo_id}:${session.client_id}:${session.order_id}:${session.session_id}: ${session.session_status}`);
                         
                         // Store the last notified status
