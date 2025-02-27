@@ -64,7 +64,7 @@ module.exports = (io, db) => {
                     type: "bill_update"
                 };
                 try {
-                    await axios.post("https://webhook.botpress.cloud/b967de81-4aea-49da-a92e-ed73769b636e", webhookData);
+                    await axios.post("https://webhook.botpress.cloud/6c6aa75d-ce99-42a3-b6aa-d499c957ed2a", webhookData);
                 console.log(`✅ Webhook sent for bill ${bill.client_id}: ${bill.convo_id}: ${bill.bill_request_id}: ${bill.bill_status}`);
                 } catch (error) {
                     console.error("❌ Webhook failed:", error.response?.data || error.message);
